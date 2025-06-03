@@ -1,0 +1,128 @@
+<?php
+
+namespace App\Services;
+
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Validator;
+use Carbon\Carbon;
+use Throwable;
+
+class DialogflowWebhookService
+{
+    private AvailabilitySearchService $searchService;
+
+    public function __construct(AvailabilitySearchService $searchService)
+    {
+        $this->searchService = $searchService;
+    }
+
+    public function handleRequest(Request $request): array // Returns Dialogflow response array
+    {
+        Log::debug('Dialogflow Webhook Request Received by Service:', $request->all());
+        $parameters = $request->input('queryResult.parameters', []);
+
+        $validationResult = $this->validateDialogflowParameters($parameters);
+        if (!$validationResult['valid']) {
+            return ['fulfillmentText' => $validationResult['message']];
+        }
+
+        $searchParams = $this->prepareSearchParams($parameters);
+        if (!$searchParams) { // e.g., if date parsing failed
+            return ['fulfillmentText' => "I couldn't understand the dates you provided. Please use a clear date format."];
+        }
+
+        $responseText = '';
+        try {
+            $availabilityResult = $this->searchService->findAvailableRooms($searchParams);
+            
+            $responseText = $this->formatFulfillmentText(
+                $availabilityResult,
+                $searchParams['property_id'], // Pass original propertyId for messages
+                $searchParams['check_in'],
+                $searchParams['check_out'],
+                $searchParams['guests']
+            );
+        } catch (Throwable $e) {
+            Log::error('Error calling AvailabilitySearchService from Dialogflow webhook handler: ' . $e->getMessage(), ['searchParams' => $searchParams]);
+            $responseText = "I encountered an issue while checking availability. Please try again in a moment.";
+        }
+
+        return ['fulfillmentText' => $responseText];
+    }
+
+    private function validateDialogflowParameters(array $parameters): array
+    {
+        $validator = Validator::make($parameters, [
+            'property_id' => ['required', 'string'],
+            'check_in_date' => ['required', 'string'],
+            'check_out_date' => ['required', 'string'],
+            'guests' => ['required', 'numeric', 'integer', 'min:1'],
+        ]);
+
+        if ($validator->fails()) {
+            Log::error('Dialogflow Webhook: Missing or invalid parameters in service', $validator->errors()->toArray());
+            return [
+                'valid' => false,
+                'message' => 'I seem to be missing some details for your availability request. Could you please provide them all?'
+            ];
+        }
+        return ['valid' => true, 'message' => ''];
+    }
+
+    private function prepareSearchParams(array $dialogflowParameters): ?array
+    {
+        try {
+            // Normalize propertyId if needed (e.g., trim, uppercase for IDs)
+            $propertyId = trim($dialogflowParameters['property_id'] ?? ''); // Or other normalization
+            if(empty($propertyId)) $propertyId = null;
+
+
+            return [
+                'property_id' => $propertyId,
+                'check_in' => Carbon::parse($dialogflowParameters['check_in_date'])->toDateString(),
+                'check_out' => Carbon::parse($dialogflowParameters['check_out_date'])->toDateString(),
+                'guests' => (int) $dialogflowParameters['guests'],
+            ];
+        } catch (Throwable $e) {
+            Log::error('Dialogflow Webhook: Invalid date format received during param prep', [
+                'check_in' => $dialogflowParameters['check_in_date'] ?? null,
+                'check_out' => $dialogflowParameters['check_out_date'] ?? null,
+                'error' => $e->getMessage()
+            ]);
+            return null;
+        }
+    }
+
+    private function formatFulfillmentText(array $availabilityResult, string $propertyId, string $checkIn, string $checkOut, int $numGuests): string
+    {
+        if (isset($availabilityResult['message'])) {
+            if ($availabilityResult['message'] === 'Property not found.') {
+                return "Sorry, I couldn't find any information for property ID {$propertyId}.";
+            } elseif ($availabilityResult['message'] === 'Invalid date range: number of nights is zero.') {
+                return "The check-out date must be after the check-in date. Could you please provide valid dates?";
+            } else {
+                return "I couldn't find any rooms matching your criteria for property ID {$propertyId} from {$checkIn} to {$checkOut} for {$numGuests} guests.";
+            }
+        }
+
+        if (!empty($availabilityResult['rooms'])) {
+            $roomCount = count($availabilityResult['rooms']);
+            $minPrice = null;
+            if ($roomCount > 0) {
+                $prices = array_column($availabilityResult['rooms'], 'total_price');
+                $minPrice = min($prices);
+            }
+
+            $responseText = "Yes! We have {$roomCount} room(s) available for property ID {$propertyId} from {$checkIn} to {$checkOut} for {$numGuests} guests.";
+            if ($minPrice !== null) {
+                $responseText .= " Prices start from \${$minPrice}.";
+            }
+            $responseText .= " Want to reserve now?";
+            return $responseText;
+        }
+
+        // Default fallback if no specific message and no rooms
+        return "Sorry, no rooms are available for property ID {$propertyId} from {$checkIn} to {$checkOut} for {$numGuests} guests.";
+    }
+}

@@ -1,0 +1,204 @@
+<?php
+
+namespace App\Services;
+
+use Carbon\Carbon;
+use App\Models\Room;
+use App\Models\Property;
+use Carbon\CarbonPeriod;
+use App\Traits\Cacheable;
+use App\Repositories\RoomRepository;
+use App\Repositories\PropertyRepository;
+use Illuminate\Container\Attributes\Log;
+use App\Exceptions\PropertyNotFoundException;
+use App\Repositories\RoomAvailabilityRepository;
+use App\Exceptions\InvalidSearchParametersException;
+
+class AvailabilitySearchService
+{
+    use Cacheable;
+
+    protected PropertyRepository $propertyRepository;
+    protected RoomRepository $roomRepository;
+    protected RoomAvailabilityRepository $roomAvailabilityRepository;
+
+    private const CACHE_TTL_SECONDS = 60 * 60 * 24; // 24 hours
+
+    public function __construct(
+        PropertyRepository $propertyRepository,
+        RoomRepository $roomRepository,
+        RoomAvailabilityRepository $roomAvailabilityRepository
+    ) {
+        $this->propertyRepository = $propertyRepository;
+        $this->roomRepository = $roomRepository;
+        $this->roomAvailabilityRepository = $roomAvailabilityRepository;
+    }
+
+    public function findAvailableRooms(array $params): array
+    {
+        $dataFetcher = function () use ($params) {
+            return $this->fetchAndProcessAvailability($params);
+        };
+
+        return $this->getCachedAvailability($params, $dataFetcher);
+    }
+
+    /**
+     * Retrieves availability data, utilizing the Cacheable trait.
+     */
+    private function getCachedAvailability(array $params, callable $dataFetcher): array
+    {
+        $keyPrefix = config('caching_settings.availability.key_prefix');
+        $baseCacheTags = config('caching_settings.availability.base_tags');
+        $specificTagPrefix = config('caching_settings.availability.property_tag_prefix');
+        $ttlInSeconds = config('caching_settings.availability.ttl_seconds');
+
+        // Check if configs exists and the type of each value
+        if (!is_string($keyPrefix) || !is_array($baseCacheTags) || !is_string($specificTagPrefix) || !is_int($ttlInSeconds)) {
+            Log::critical('Caching configuration for availability is missing or invalid.', [
+                'keyPrefix' => $keyPrefix,
+                'baseCacheTags' => $baseCacheTags,
+                'specificTagPrefix' => $specificTagPrefix,
+                'ttlInSeconds' => $ttlInSeconds,
+            ]);
+
+            throw new \RuntimeException("Critical caching configuration is missing or invalid for availability search.");
+
+        }
+
+        return $this->rememberWithTags(
+            keyPrefix: $keyPrefix,
+            keyParams: $params,
+            baseCacheTags: $baseCacheTags,
+            specificTagIdentifier: $params['property_id'],
+            specificTagPrefix: $specificTagPrefix,
+            ttlInSeconds: $ttlInSeconds,
+            callback: $dataFetcher
+        );
+    }
+
+    /**
+     * Core logic to fetch and process availability.
+     */
+    private function fetchAndProcessAvailability(array $params): array
+    {
+        $externalPropertyId = $params['property_id'];
+        $checkInDate = Carbon::parse($params['check_in']);
+        $checkOutDate = Carbon::parse($params['check_out']);
+        $numberOfGuests = (int) $params['guests'];
+
+        $property = $this->propertyRepository->findByExternalId($externalPropertyId);
+
+        if (!$property) {
+            throw PropertyNotFoundException::withIdentifier($externalPropertyId);
+        }
+
+        $stayDetails = $this->calculateStayDetails($checkInDate, $checkOutDate);
+        if ($stayDetails['numberOfNights'] === 0) {
+            throw InvalidSearchParametersException::invalidDateRange();
+        }
+
+        $availableRoomsOutput = $this->findAndProcessRooms(
+            $property,
+            $stayDetails['stayDateStrings'],
+            $stayDetails['numberOfNights'],
+            $numberOfGuests
+        );
+
+        return [
+            'property_id' => $property->external_property_id,
+            'rooms' => $availableRoomsOutput,
+        ];
+    }
+
+
+    /**
+     * Calculates stay dates and number of nights.
+     */
+    private function calculateStayDetails(Carbon $checkInDate, Carbon $checkOutDate): array
+    {
+        // Ensure check-out date is after check-in date
+        if ($checkOutDate->lte($checkInDate)) {
+            return ['stayDateStrings' => [], 'numberOfNights' => 0];
+        }
+
+        $stayPeriod = CarbonPeriod::create($checkInDate, $checkOutDate->copy()->subDay());
+        $stayDateStrings = [];
+        foreach ($stayPeriod as $date) {
+            $stayDateStrings[] = $date->toDateString();
+        }
+
+        return [
+            'stayDateStrings' => $stayDateStrings,
+            'numberOfNights' => count($stayDateStrings)
+        ];
+    }
+
+    /**
+     * Finds and processes rooms for a given property and stay details.
+     */
+    private function findAndProcessRooms(
+        Property $property,
+        array $stayDateStrings,
+        int $numberOfNights,
+        int $numberOfGuests
+    ): array {
+        $availableRoomsOutput = [];
+        $rooms = $this->roomRepository->getForProperty($property->id);
+
+        foreach ($rooms as $room) {
+            $roomDetails = $this->checkSingleRoomAvailability(
+                $room,
+                $stayDateStrings,
+                $numberOfNights,
+                $numberOfGuests
+            );
+
+            if ($roomDetails) {
+                $availableRoomsOutput[] = $roomDetails;
+            }
+        }
+        return $availableRoomsOutput;
+    }
+
+    /**
+     * Checks availability for a single room and returns its details if available.
+     */
+    private function checkSingleRoomAvailability(
+        Room $room,
+        array $stayDateStrings,
+        int $numberOfNights,
+        int $numberOfGuests
+    ): ?array {
+        $availabilityRecords = $this->roomAvailabilityRepository->getForRoomByDates(
+            $room->id,
+            $stayDateStrings
+        );
+
+        if ($availabilityRecords->count() !== $numberOfNights) {
+            return null; // Not available for all dates
+        }
+
+        $totalPriceForRoom = 0;
+        $roomEffectiveMaxGuests = PHP_INT_MAX;
+
+        foreach ($availabilityRecords as $availabilityRecord) {
+
+            // No availability, because of no guest capacity
+            if ($availabilityRecord->max_guests < $numberOfGuests) {
+                return null;
+            }
+            $totalPriceForRoom += (float) $availabilityRecord->price;
+            if ($availabilityRecord->max_guests < $roomEffectiveMaxGuests) {
+                $roomEffectiveMaxGuests = $availabilityRecord->max_guests;
+            }
+        }
+
+        //TODO: confirm this, I should return the minimum value per day (?)
+        return [
+            'room_id' => $room->external_room_id,
+            'max_guests' => $roomEffectiveMaxGuests,
+            'total_price' => $totalPriceForRoom,
+        ];
+    }
+}

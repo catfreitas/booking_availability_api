@@ -35,4 +35,8 @@ return [
         ],
     ],
 
+    'availability_feed' => [
+        'url' => env('AVAILABILITY_FEED_URL'),
+    ],
+
 ];
