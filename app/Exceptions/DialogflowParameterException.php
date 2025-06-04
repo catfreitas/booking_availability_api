@@ -28,19 +28,14 @@ class DialogflowParameterException extends Exception
      */
     public static function validationFailed(MessageBag $errors, string $customMessage = 'Some required details are missing or invalid.'): static
     {
-       // Log the specific validation errors for debugging purposes
-        Log::warning('DialogflowParameterException: Validation failed with specific errors.', $errors->toArray());
-
         $exception = new static($customMessage);
-        // You could add a public property to the exception to hold the errors if needed elsewhere.
-        // $exception->validationErrors = $errors->toArray();
         return $exception;
     }
 
     /**
      * Create a new exception for data formatting issues (e.g., dates).
      *
-     * @param string $details Specifics about the format issue.
+     * @param string $details
      * @return static
      */
     public static function dataFormattingError(string $details): static

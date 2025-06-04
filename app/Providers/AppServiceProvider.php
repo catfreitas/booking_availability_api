@@ -46,7 +46,7 @@ class AppServiceProvider extends ServiceProvider
     {
         //Rate limit for Availability
         RateLimiter::for('getAvailability', function (Request $request) {
-            return Limit::perHour(100)->by($request->user()?->id ?: $request->ip());
+            return Limit::perHour(maxAttempts: 100)->by($request->user()?->id ?: $request->ip());
         });
 
         //Rate limit for Ingestion Endpoint

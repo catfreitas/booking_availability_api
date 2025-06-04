@@ -13,10 +13,8 @@ class RoomFactory extends Factory
     public function definition(): array
     {
         return [
-            // You'll usually associate this with a Property when using the factory
-            // 'property_id' => Property::factory(), // Example if creating a new property too
             'external_room_id' => 'R' . $this->faker->numerify('###'),
-            'name' => $this->faker->words(2, true) . ' Room',
+            //'name' => $this->faker->words(2, true) . ' Room',
         ];
     }
 }

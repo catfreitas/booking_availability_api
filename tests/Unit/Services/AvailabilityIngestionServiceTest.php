@@ -4,15 +4,16 @@ namespace Tests\Unit\Services;
 
 use Tests\TestCase;
 use App\Services\AvailabilityIngestionService;
-use App\Repositories\PropertyRepository;    // Interface
-use App\Repositories\RoomRepository;         // Interface
-use App\Repositories\RoomAvailabilityRepository; // Interface
-use App\Models\Property;                     // Eloquent Model
-use App\Models\Room;                         // Eloquent Model
-use App\Models\RoomAvailability;             // Eloquent Model
+use App\Repositories\PropertyRepository;
+use App\Repositories\RoomRepository;
+use App\Repositories\RoomAvailabilityRepository;
+use App\Models\Property;
+use App\Models\Room;
+use App\Models\RoomAvailability;
+use App\DataTransferObjects\AvailabilityIngestionDTO;
+use App\DataTransferObjects\RoomIngestionDTO; // Used by AvailabilityIngestionDTO constructor
 use Mockery;
 use Mockery\MockInterface;
-use Illuminate\Support\Facades\DB; // To potentially mock DB::transaction if needed, though we test through it here.
 
 class AvailabilityIngestionServiceTest extends TestCase
 {
@@ -24,13 +25,9 @@ class AvailabilityIngestionServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-
-        // Create mocks for our repository dependencies
         $this->propertyRepositoryMock = Mockery::mock(PropertyRepository::class);
         $this->roomRepositoryMock = Mockery::mock(RoomRepository::class);
         $this->roomAvailabilityRepositoryMock = Mockery::mock(RoomAvailabilityRepository::class);
-
-        // Instantiate the service with the mocked dependencies
         $this->ingestionService = new AvailabilityIngestionService(
             $this->propertyRepositoryMock,
             $this->roomRepositoryMock,
@@ -40,109 +37,161 @@ class AvailabilityIngestionServiceTest extends TestCase
 
     protected function tearDown(): void
     {
-        Mockery::close(); // Important to close Mockery expectations after each test
+        Mockery::close();
         parent::tearDown();
     }
 
-    /**
-     * @test
-     */
-    public function it_successfully_ingests_valid_availability_data(): void
+    /** @test */
+    public function it_successfully_ingests_valid_availability_data_using_dto(): void
     {
-        // 1. Prepare sample validated data
-        $validatedData = [
-            'property_id' => 'PROP123',
+        $ingestionDto = $this->getCreateSampleIngestionDto();
+
+        $mockedProperty = new Property(['name' => $ingestionDto->name]);
+        $mockedProperty->external_property_id = $ingestionDto->property_id;
+        $mockedProperty->id = 77;
+
+        $mockedRoomR101 = new Room(['external_room_id' => 'R_CREATE_101']);
+        $mockedRoomR101->id = 771;
+        $mockedRoomR101->property_id = $mockedProperty->id;
+
+
+        $mockedRoomR202 = new Room(['external_room_id' => 'R_CREATE_202']);
+        $mockedRoomR202->id = 772;
+        $mockedRoomR202->property_id = $mockedProperty->id;
+
+        $this->expectPropertyCreateInteractions($ingestionDto, $mockedProperty);
+        $this->expectRoomCreateInteractions($mockedProperty, $ingestionDto, $mockedRoomR101, $mockedRoomR202);
+        $this->expectRoomAvailabilityCreateInteractions($mockedRoomR101, $mockedRoomR202, $ingestionDto);
+
+        $this->ingestionService->ingestData($ingestionDto);
+        $this->assertTrue(true);
+    }
+
+        /** @test */
+    public function it_successfully_updates_existing_availability_data(): void
+    {
+        //Get DTO for update scenario
+        $ingestionDto = $this->getUpdateSampleIngestionDto();
+
+        // Prepare mock model instances
+        $mockedProperty = new Property(['name' => $ingestionDto->name]);
+        $mockedProperty->external_property_id = $ingestionDto->property_id;
+        $mockedProperty->id = 1;
+
+        $mockedRoom = new Room();
+        $mockedRoom->id = 10;
+        $mockedRoom->property_id = $mockedProperty->id;
+        $mockedRoom->external_room_id = $ingestionDto->rooms[0]->room_id;
+
+        $this->expectPropertyUpdateInteractions($ingestionDto, $mockedProperty);
+        $this->expectRoomUpdateInteractions($mockedProperty, $ingestionDto->rooms[0], $mockedRoom);
+        $this->expectRoomAvailabilityUpdateInteractions($mockedRoom, $ingestionDto->rooms[0]);
+
+        $this->ingestionService->ingestData($ingestionDto);
+
+        $this->assertTrue(true);
+    }
+
+    private function getCreateSampleIngestionDto(): AvailabilityIngestionDTO
+    {
+        $rawData = [
+            'property_id' => 'PROP987',
+            'name' => 'Hotel Viana Test Create',
             'rooms' => [
-                [ // First entry for R101
-                    'room_id' => 'R101',
-                    'date' => '2025-10-01',
-                    'max_guests' => 2,
-                    'price' => 100.00,
-                ],
-                [ // Second entry for R101 (e.g., different date)
-                    'room_id' => 'R101',
-                    'date' => '2025-10-02',
-                    'max_guests' => 2,
-                    'price' => 105.00,
-                ],
-                [ // Entry for R202
-                    'room_id' => 'R202',
-                    'date' => '2025-10-01',
-                    'max_guests' => 4,
-                    'price' => 180.00,
-                ],
+                ['room_id' => 'R_CREATE_101', 'date' => '2025-11-15', 'max_guests' => 2, 'price' => 110.00],
+                ['room_id' => 'R_CREATE_101', 'date' => '2025-11-16', 'max_guests' => 2, 'price' => 115.50],
+                ['room_id' => 'R_CREATE_202', 'date' => '2025-11-15', 'max_guests' => 3, 'price' => 190.00],
             ],
         ];
+        return new AvailabilityIngestionDTO(
+            property_id: $rawData['property_id'],
+            name: $rawData['name'],
+            roomsData: $rawData['rooms']
+        );
+    }
 
-        // 2. Define expectations for the mocked repositories
-
-        // --- Property Mock ---
-        // Simulate the property object that will be returned by the repository
-        $mockedProperty = new Property(['name' => 'PROP123']); // Using a real model instance (not saved)
-        $mockedProperty->external_property_id = 'PROP123';
-        $mockedProperty->id = 1; // Crucial: ensure it has an ID for subsequent FK use
-
+    private function expectPropertyCreateInteractions(AvailabilityIngestionDTO $dto, Property $returnedProperty): void
+    {
         $this->propertyRepositoryMock
             ->shouldReceive('updateOrCreateByExternalId')
             ->once()
-            ->with('PROP123', ['name' => 'PROP123']) // Service passes name as external_id if not otherwise specified
-            ->andReturn($mockedProperty);
+            ->with($dto->property_id, ['name' => $dto->name])
+            ->andReturn($returnedProperty);
+    }
 
-        // --- Room Mocks ---
-        // Simulate room objects to be returned
-        $mockedRoomR101 = new Room(['name' => 'R101']);
-        $mockedRoomR101->id = 10;
-        $mockedRoomR101->property_id = $mockedProperty->id;
-        $mockedRoomR101->external_room_id = 'R101';
-
-        $mockedRoomR202 = new Room(['name' => 'R202']);
-        $mockedRoomR202->id = 20;
-        $mockedRoomR202->property_id = $mockedProperty->id;
-        $mockedRoomR202->external_room_id = 'R202';
-
-        // Expectation for R101 (will be called twice by the service due to two entries in $validatedData)
+    private function expectRoomCreateInteractions(Property $property, AvailabilityIngestionDTO $dto, Room $returnedRoom101, Room $returnedRoom202): void
+    {
         $this->roomRepositoryMock
             ->shouldReceive('updateOrCreateForProperty')
-            ->with($mockedProperty->id, 'R101', ['name' => 'R101'])
-            ->twice() // Corrected: Expect this call twice
-            ->andReturn($mockedRoomR101); // Return the same stable mocked Room instance for R101
+            ->with($property->id, 'R_CREATE_101', [])
+            ->twice()
+            ->andReturn($returnedRoom101);
 
-        // Expectation for R202
         $this->roomRepositoryMock
             ->shouldReceive('updateOrCreateForProperty')
-            ->with($mockedProperty->id, 'R202', ['name' => 'R202'])
+            ->with($property->id, 'R_CREATE_202', [])
             ->once()
-            ->andReturn($mockedRoomR202);
+            ->andReturn($returnedRoom202);
+    }
 
-        // --- RoomAvailability Mocks ---
-        // We need to simulate RoomAvailability instances being returned as well,
-        // even if the service doesn't directly use their return values after creation,
-        // because Eloquent's updateOrCreate will instantiate them.
+    private function expectRoomAvailabilityCreateInteractions(Room $room101, Room $room202, AvailabilityIngestionDTO $dto): void
+    {
         $this->roomAvailabilityRepositoryMock
             ->shouldReceive('updateOrCreateForRoomByDate')
-            ->with($mockedRoomR101->id, '2025-10-01', ['price' => 100.00, 'max_guests' => 2])
-            ->once()
-            ->andReturn(new RoomAvailability(['id' => 1001, 'room_id' => $mockedRoomR101->id, 'date' => '2025-10-01', 'price' => 100.00, 'max_guests' => 2]));
-
-        $this->roomAvailabilityRepositoryMock
-            ->shouldReceive('updateOrCreateForRoomByDate')
-            ->with($mockedRoomR101->id, '2025-10-02', ['price' => 105.00, 'max_guests' => 2])
-            ->once()
-            ->andReturn(new RoomAvailability(['id' => 1002, 'room_id' => $mockedRoomR101->id, 'date' => '2025-10-02', 'price' => 105.00, 'max_guests' => 2]));
+            ->with($room101->id, $dto->rooms[0]->date, ['price' => $dto->rooms[0]->price, 'max_guests' => $dto->rooms[0]->max_guests])
+            ->once()->andReturn(new RoomAvailability(['id' => rand(1000, 1999)]));
 
         $this->roomAvailabilityRepositoryMock
             ->shouldReceive('updateOrCreateForRoomByDate')
-            ->with($mockedRoomR202->id, '2025-10-01', ['price' => 180.00, 'max_guests' => 4])
+            ->with($room101->id, $dto->rooms[1]->date, ['price' => $dto->rooms[1]->price, 'max_guests' => $dto->rooms[1]->max_guests])
+            ->once()->andReturn(new RoomAvailability(['id' => rand(2000, 2999)]));
+
+        $this->roomAvailabilityRepositoryMock
+            ->shouldReceive('updateOrCreateForRoomByDate')
+            ->with($room202->id, $dto->rooms[2]->date, ['price' => $dto->rooms[2]->price, 'max_guests' => $dto->rooms[2]->max_guests])
+            ->once()->andReturn(new RoomAvailability(['id' => rand(3000, 3999)]));
+    }
+
+    private function getUpdateSampleIngestionDto(): AvailabilityIngestionDTO
+    {
+        return new AvailabilityIngestionDTO(
+            property_id: 'EXISTING_PROP',
+            name: 'Existing Hotel - Updated Name',
+            roomsData: [
+                [
+                    'room_id' => 'EXISTING_R1',
+                    'date' => '2025-12-01',
+                    'max_guests' => 3,
+                    'price' => 110.00,
+                ]
+            ]
+        );
+    }
+
+    private function expectPropertyUpdateInteractions(AvailabilityIngestionDTO $dto, Property $returnedProperty): void
+    {
+        $this->propertyRepositoryMock
+            ->shouldReceive('updateOrCreateByExternalId')
             ->once()
-            ->andReturn(new RoomAvailability(['id' => 1003, 'room_id' => $mockedRoomR202->id, 'date' => '2025-10-01', 'price' => 180.00, 'max_guests' => 4]));
+            ->with($dto->property_id, ['name' => $dto->name]) // Expects the updated name
+            ->andReturn($returnedProperty);
+    }
 
-        // 3. Call the service method
-        // The service uses DB::transaction internally. We are testing the service's interaction
-        // with its mocked repositories within that transaction's scope.
-        $this->ingestionService->ingestData($validatedData);
+    private function expectRoomUpdateInteractions(Property $property, RoomIngestionDTO $roomDto, Room $returnedRoom): void
+    {
+        $this->roomRepositoryMock
+            ->shouldReceive('updateOrCreateForProperty')
+            ->once()
+            ->with($property->id, $roomDto->room_id, []) // Assuming no other room attributes are updated from RoomIngestionDTO
+            ->andReturn($returnedRoom);
+    }
 
-        // 4. Assertions: Mockery's `shouldReceive` expectations serve as assertions.
-        // If tearDown() completes without Mockery throwing an exception, all expectations were met.
-        $this->assertTrue(true); // A simple assertion to ensure the test ran to this point.
+    private function expectRoomAvailabilityUpdateInteractions(Room $room, RoomIngestionDTO $roomDto): void
+    {
+        $this->roomAvailabilityRepositoryMock
+            ->shouldReceive('updateOrCreateForRoomByDate')
+            ->once()
+            ->with($room->id, $roomDto->date, ['price' => $roomDto->price, 'max_guests' => $roomDto->max_guests])
+            ->andReturn(new RoomAvailability(['id' => rand(4000,4999)])); // Return a mock/dummy instance
     }
 }

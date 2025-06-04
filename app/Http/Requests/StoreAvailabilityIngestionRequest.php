@@ -11,7 +11,7 @@ class StoreAvailabilityIngestionRequest extends FormRequest
      */
     public function authorize(): bool
     {
-        // TODO: chang eit later
+        // chang eit later
         return true;
     }
 

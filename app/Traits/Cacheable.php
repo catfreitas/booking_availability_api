@@ -62,6 +62,7 @@ trait Cacheable
         $cacheKey = $this->generateCacheKey($keyPrefix, $keyParams);
         $cacheTags = $this->getCacheTags($baseCacheTags, $specificTagIdentifier, $specificTagPrefix);
 
+        //Debug cache
         Log::debug(class_basename($this) . ': Attempting to retrieve from cache.', ['key' => $cacheKey, 'tags' => $cacheTags]);
 
         return Cache::tags($cacheTags)->remember($cacheKey, $ttlInSeconds, function () use ($callback, $cacheKey, $keyParams) {

@@ -13,5 +13,5 @@ Route::middleware(['auth:sanctum',  'throttle:getAvailability'])->get('/availabi
 //Availability Ingestion
 Route::post('/availability-ingest', [AvailabilityController::class, 'store'])->middleware('throttle:availabilityIngestion');
 
-
+//Connection Agent Dialogflow
 Route::post('/agent-webhook', [AvailabilityController::class, 'handleAvailability']);

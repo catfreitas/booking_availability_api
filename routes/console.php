@@ -9,7 +9,6 @@ Artisan::command('inspire', function () {
 })->purpose('Display an inspiring quote');
 
 // Scheduled commands
+
+//Availability injection
 Schedule::command('app:sync-availability')->daily();
-// Or for more frequent testing:
-// Schedule::command('app:sync-availability')->everyFiveMinutes();
-// Schedule::command('app:sync-availability')->hourly();

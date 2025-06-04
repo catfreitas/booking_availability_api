@@ -8,13 +8,12 @@ use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
-// use Illuminate\Validation\ValidationException; // Not directly thrown/caught here unless you add Validator::make()
 use Throwable;
 
 class SyncAvailabilityCommand extends Command
 {
     protected $signature = 'app:sync-availability';
-    protected $description = 'Fetches and syncs availability data from an external JSON feed.'; // Updated description
+    protected $description = 'Fetches and syncs availability data from an external JSON feed.';
     protected AvailabilityIngestionService $ingestionService;
 
     public function __construct(AvailabilityIngestionService $ingestionService)
@@ -29,18 +28,18 @@ class SyncAvailabilityCommand extends Command
         $feedUrl = $this->getFeedUrl();
 
         if (!$feedUrl) {
-            return Command::FAILURE; // Error message already printed by getFeedUrl
+            return Command::FAILURE;
         }
 
         try {
-            $feedData = $this->_fetchAndParseFeed($feedUrl);
+            $feedData = $this->fetchAndParseFeed($feedUrl);
 
             if (!$feedData) {
-                return Command::FAILURE; // Error message already printed by _fetchAndParseFeed
+                return Command::FAILURE;
             }
 
-            if (!$this->_validateFeedDataStructure($feedData, $feedUrl, Http::getLastResponse())) { // Pass last response for logging if needed
-                return Command::FAILURE; // Error message already printed by _validateFeedDataStructure
+            if (!$this->validateFeedDataStructure($feedData, $feedUrl)) {
+                return Command::FAILURE;
             }
 
             // Create DTO from the feed data
@@ -56,14 +55,14 @@ class SyncAvailabilityCommand extends Command
             $this->info('Availability data synced successfully from ' . $feedUrl);
             Log::info('SyncAvailabilityCommand: Availability data synced successfully.', ['url' => $feedUrl]);
 
-            $this->_clearCache();
+            $this->clearCache();
 
             return Command::SUCCESS;
 
         } catch (Throwable $e) {
             $this->error('An unexpected error occurred during availability sync: ' . $e->getMessage());
             Log::error('SyncAvailabilityCommand: An unexpected error occurred.', [
-                'url' => $feedUrl, // $feedUrl is defined in this scope
+                'url' => $feedUrl,
                 'error_message' => $e->getMessage(),
                 'trace' => substr($e->getTraceAsString(), 0, 1000) // Limit trace length
             ]);
@@ -87,7 +86,7 @@ class SyncAvailabilityCommand extends Command
     /**
      * Fetches and parses data from the external feed URL.
      */
-    private function _fetchAndParseFeed(string $feedUrl): ?array
+    private function fetchAndParseFeed(string $feedUrl): ?array
     {
         $response = Http::timeout(30)->get($feedUrl);
 
@@ -106,14 +105,13 @@ class SyncAvailabilityCommand extends Command
     /**
      * Validates the basic structure of the fetched feed data.
      */
-    private function _validateFeedDataStructure(array $data, string $feedUrl, $httpResponseForLog = null): bool
+    private function validateFeedDataStructure(array $data, string $feedUrl, $httpResponseForLog = null): bool
     {
         if (empty($data) || !isset($data['property_id']) || !isset($data['rooms']) || !is_array($data['rooms'])) {
             $this->error('Fetched data is empty or has a malformed structure.');
             Log::warning('SyncAvailabilityCommand: Fetched data is empty or malformed.', [
                 'url' => $feedUrl,
-                'data_snippet' => substr(json_encode($data), 0, 500), // Log snippet of data
-                // 'response_body_if_available' => $httpResponseForLog ? substr($httpResponseForLog->body() ?? '', 0, 500) : null
+                'data_snippet' => substr(json_encode($data), 0, 500),
             ]);
             return false;
         }
@@ -123,7 +121,7 @@ class SyncAvailabilityCommand extends Command
     /**
      * Clears the relevant application cache.
      */
-    private function _clearCache(): void
+    private function clearCache(): void
     {
         $currentCacheDriver = config('cache.default');
         $this->info('SyncAvailabilityCommand: About to flush cache. Detected default cache driver: ' . $currentCacheDriver);
@@ -135,15 +133,13 @@ class SyncAvailabilityCommand extends Command
                 $this->info('Availability cache tags flushed (Redis).');
                 Log::info('Availability cache tags flushed (Redis).');
             } else {
-                Cache::flush(); // Clears data from the default cache store
+                Cache::flush();
                 $this->info('Application data cache flushed (non-Redis default: ' . $currentCacheDriver . ').');
                 Log::info('Application data cache flushed (non-Redis default: ' . $currentCacheDriver . ').');
             }
         } catch (Throwable $e) {
             $this->error('Error during cache flush: ' . $e->getMessage());
             Log::error('SyncAvailabilityCommand: Error during cache flush.', ['error_message' => $e->getMessage()]);
-            // Decide if this should make the command fail or just log a warning.
-            // For now, it logs and the command might still return SUCCESS if ingestion was okay.
         }
     }
 }

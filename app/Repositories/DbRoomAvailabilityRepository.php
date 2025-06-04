@@ -4,22 +4,19 @@ namespace App\Repositories;
 
 use App\Models\RoomAvailability;
 use Illuminate\Database\Eloquent\Collection;
-// Interface RoomAvailabilityRepository is in the same namespace
 
 class DbRoomAvailabilityRepository implements RoomAvailabilityRepository
 {
     public function updateOrCreateForRoomByDate(int $roomId, string $date, array $data): RoomAvailability
     {
-        // Attributes to find the record by
-        $findCriteria = [
+
+        $findInfo = [
             'room_id' => $roomId,
             'date' => $date,
         ];
 
-        // Attributes to update with or use for creation (price, max_guests)
-        // Eloquent's updateOrCreate will ensure room_id and date are set from $findCriteria if creating.
         return RoomAvailability::updateOrCreate(
-            $findCriteria,
+            $findInfo,
             $data
         );
     }

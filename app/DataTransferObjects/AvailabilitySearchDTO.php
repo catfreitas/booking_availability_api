@@ -2,7 +2,6 @@
 
 namespace App\DataTransferObjects;
 
-// You can use PHP 8 constructor property promotion for conciseness
 class AvailabilitySearchDTO
 {
     public function __construct(

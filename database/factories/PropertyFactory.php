@@ -13,7 +13,7 @@ class PropertyFactory extends Factory
     {
         return [
             'external_property_id' => 'PROP' . $this->faker->unique()->numerify('###'),
-            'name' => $this->faker->company . ' Hotel',
+            'name' => $this->faker->company,
         ];
     }
 }

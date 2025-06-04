@@ -14,8 +14,6 @@ class RoomAvailabilityFactory extends Factory
     public function definition(): array
     {
         return [
-            // You'll usually associate this with a Room when using the factory
-            // 'room_id' => Room::factory(), // Example if creating a new room too
             'date' => Carbon::today()->addDays($this->faker->numberBetween(1, 30))->toDateString(),
             'price' => $this->faker->randomFloat(2, 50, 500),
             'max_guests' => $this->faker->numberBetween(1, 4),

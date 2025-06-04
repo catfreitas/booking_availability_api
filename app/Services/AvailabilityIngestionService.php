@@ -2,15 +2,14 @@
 
 namespace App\Services;
 
-use App\DataTransferObjects\AvailabilityIngestionDTO; // Import the main DTO
-use App\DataTransferObjects\RoomIngestionDTO;       // Import the room DTO
+use App\DataTransferObjects\AvailabilityIngestionDTO;
+use App\DataTransferObjects\RoomIngestionDTO;
 use App\Repositories\PropertyRepository;
 use App\Repositories\RoomRepository;
 use App\Repositories\RoomAvailabilityRepository;
 use App\Models\Property;
 use App\Models\Room;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log; // Keep for logging if any errors occur
 use Throwable;
 
 class AvailabilityIngestionService
@@ -32,16 +31,16 @@ class AvailabilityIngestionService
     /**
      * Ingests availability data using DTO.
      *
-     * @param AvailabilityIngestionDTO $ingestionData The DTO containing all ingestion data.
+     * @param AvailabilityIngestionDTO $ingestionData
      * @return void
-     * @throws \Throwable If any part of the ingestion process fails within the transaction.
+     * @throws \Throwable
      */
     public function ingestData(AvailabilityIngestionDTO $ingestionData): void
     {
         DB::transaction(function () use ($ingestionData) {
             $property = $this->processProperty($ingestionData->property_id, $ingestionData->name);
 
-            foreach ($ingestionData->rooms as $roomDto) { // Loop through RoomIngestionDTO objects
+            foreach ($ingestionData->rooms as $roomDto) {
                 $room = $this->processRoom($property, $roomDto);
                 $this->processRoomAvailability($room, $roomDto);
             }
@@ -72,11 +71,11 @@ class AvailabilityIngestionService
      */
     private function processRoom(Property $property, RoomIngestionDTO $roomDto): Room
     {
-        // Using the room_id (external_room_id) also as the name if not otherwise specified
+        // Using the room_id
         return $this->roomRepository->updateOrCreateForProperty(
             $property->id,
-            $roomDto->room_id, // from DTO
-            ['name' => $roomDto->room_id]
+            $roomDto->room_id,
+            []
         );
     }
 

@@ -10,31 +10,30 @@ use Exception;
 
 class BaseApiController extends Controller
 {
-    protected function notFoundResponse(Exception $exception, ?string $identifier = null, string $message = null, int $statusCode = 404): JsonResponse
+    protected function notFoundResponse(Exception $exception, ?string $property_id = null, string $message = null, int $statusCode = 404): JsonResponse
     {
         $responseMessage = $message ?: $exception->getMessage();
-        Log::info('Resource not found: ' . $responseMessage, ['identifier' => $identifier, 'exception_message' => $exception->getMessage()]);
+        Log::info('Resource not found: ' . $responseMessage, ['property_id' => $property_id, 'exception_message' => $exception->getMessage()]);
 
         $data = ['message' => $responseMessage];
-        // This part is specific to how you want your "property not found" to look
-        if ($identifier && str_contains(strtolower($exception->getMessage()), 'property')) {
-            $data['property_id'] = $identifier;
-            $data['rooms'] = []; // As per your previous structure for property not found
+
+        if ($property_id && str_contains(strtolower($exception->getMessage()), 'property')) {
+            $data['property_id'] = $property_id;
+            $data['rooms'] = [];
         }
         return response()->json($data, $statusCode);
     }
 
-    protected function badRequestResponse(Exception $exception, ?string $identifier = null, string $message = null, int $statusCode = 400): JsonResponse
+    protected function badRequestResponse(Exception $exception, ?string $property_id = null, string $message = null, int $statusCode = 400): JsonResponse
     {
         $responseMessage = $message ?: $exception->getMessage();
-        Log::warning('Bad request: ' . $responseMessage, ['identifier' => $identifier, 'exception_message' => $exception->getMessage()]); // Corrected Log call
+        Log::warning('Bad request: ' . $responseMessage, ['property_id' => $property_id, 'exception_message' => $exception->getMessage()]);
 
         $data = ['message' => $responseMessage];
-        // This part is specific to how you want your "bad request" for availability to look
-        if ($identifier && str_contains(strtolower($exception->getMessage()), 'date range')) { // Example condition
-            $data['property_id'] = $identifier;
+
+        if ($property_id && str_contains(strtolower($exception->getMessage()), 'date range')) {
+            $data['property_id'] = $property_id;
             $data['rooms'] = [];
-            // You might want to include more structured error details here if needed, e.g., from $exception->errors() if it's a ValidationException
         }
         return response()->json($data, $statusCode);
     }
@@ -84,7 +83,6 @@ class BaseApiController extends Controller
                 'exception_class' => get_class($exception)
             ]);
         } else {
-            // Log the custom message if no exception is provided but we're sending an error response
             Log::warning('Dialogflow Webhook: Sending error fulfillmentText.', ['fulfillmentText' => $responseText]);
         }
 

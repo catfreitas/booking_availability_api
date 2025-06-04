@@ -35,10 +35,9 @@ class AvailabilityController extends BaseApiController
         AvailabilityIngestionService $ingestionService
     ) {
         try {
-            // Get validated data as an array from the Form Request
+
             $validatedData = $request->validated();
 
-            // Create the DTO from the validated array
             $ingestionDto = new AvailabilityIngestionDTO(
                 property_id: $validatedData['property_id'],
                 name: $validatedData['name'],
@@ -50,9 +49,8 @@ class AvailabilityController extends BaseApiController
 
             return response()->json(['message' => 'Availability data ingested successfully.'], 200);
 
-        } catch (Throwable $e) {
-            // Log the error - this is your existing generalErrorResponse from BaseApiController
-            return $this->generalErrorResponse($e, 'Failed to ingest availability data. An internal error occurred.');
+        }  catch (Throwable $e) {
+            return $this->generalErrorResponse($e, 'Failed to store availability. An internal error occurred.');
         }
     }
 
@@ -71,11 +69,10 @@ class AvailabilityController extends BaseApiController
 
         try {
             $availabilityResult = $searchService->findAvailableRooms($searchCriteria);
-            // If service throws an exception, we won't reach here for handled error cases.
-            // $availabilityResult will now only contain successful data.
             return new PropertyAvailabilityResource($availabilityResult);
 
         } catch (PropertyNotFoundException $e) {
+            Log::debug("Controller: Caught PropertyNotFoundException for property_id: " . $validatedParams['property_id']); // <<< ADD THIS
             return $this->notFoundResponse($e, $validatedParams['property_id']);
         } catch (InvalidSearchParametersException $e) {
             return $this->badRequestResponse($e, $validatedParams['property_id']);
@@ -93,9 +90,7 @@ class AvailabilityController extends BaseApiController
             $dialogflowResponsePayload = $dialogflowService->handleRequest($request);
             return response()->json($dialogflowResponsePayload);
         } catch (Throwable $e) {
-            Log::critical('FATAL ERROR in Dialogflow Webhook Controller: ' . $e->getMessage(), [
-                'trace' => substr($e->getTraceAsString(), 0, 1000) // Limit trace in logs
-            ]);
+            Log::critical('FATAL ERROR in Dialogflow Webhook Controller: ' . $e->getMessage(), []);
             return $this->dialogflowErrorResponse($e, "I've encountered a critical system error. Please try again later.");
         }
     }
